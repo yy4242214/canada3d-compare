@@ -98,7 +98,7 @@ def worker():
 class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
-        if self.path == "/health":
+        if self.path.split("?", 1)[0] == "/health":
             body = json.dumps(
                 STATUS,
                 ensure_ascii=False
