@@ -9,6 +9,8 @@ from urllib.parse import urlsplit
 ROOT=Path(__file__).resolve().parent
 DATA=ROOT/'live_data';DATA.mkdir(exist_ok=True)
 LOCK=threading.RLock()
+UPDATE_LOCK=threading.Lock()
+RETEST_SECONDS=30*60
 modules={}
 for key,name in [('low','lowest'),('high','highest')]:
     m=importlib.import_module(name)
@@ -19,19 +21,41 @@ control=DATA/'control.json'
 try:state=json.loads(control.read_text())
 except Exception:state={}
 # 进程重启后不自动继续：需要用户重新点开始
-state.update({'running':False,'last_run':None,'last_error':None,'checks':0})
+state.update({'running':False,'starting':False,'last_run':None,'last_error':None,'checks':0})
+state.setdefault('last_retest',None)
+state.setdefault('next_retest',None)
 def persist():
     tmp=control.with_suffix('.tmp');tmp.write_text(json.dumps(state,ensure_ascii=False));tmp.replace(control)
 def update():
-    results={}
-    for key,m in modules.items():
-        try:results[key]=m.action('start')['message']
-        except Exception as e:results[key]='错误：'+str(e)
-    with LOCK:
-        state['last_run']=datetime.now(timezone.utc).isoformat()
-        state['last_error']='；'.join(v for v in results.values() if v.startswith('错误：')) or None
-        state['checks']+=1;state['results']=results;persist()
-    return results
+    # 串行执行，防止手动启动和定时线程同时读写同一份验证记录。
+    with UPDATE_LOCK:
+        with LOCK:
+            last=state.get('last_retest')
+            try:
+                due=not last or time.time()-datetime.fromisoformat(last).timestamp()>=RETEST_SECONDS
+            except (TypeError,ValueError,OverflowError):
+                due=True
+        results={}
+        success_retests=0
+        for key,m in modules.items():
+            try:
+                # 第一次仍按原算法初始化；以后每30分钟重新选择公式。
+                mode='retest' if due and m.S.get('selection') is not None else 'start'
+                results[key]=m.action(mode)['message']
+                if due: success_retests+=1
+            except Exception as e:
+                results[key]='错误：'+str(e)
+        now=datetime.now(timezone.utc)
+        with LOCK:
+            if due and success_retests==len(modules):
+                state['last_retest']=now.isoformat()
+                state['next_retest']=datetime.fromtimestamp(now.timestamp()+RETEST_SECONDS,timezone.utc).isoformat()
+            state['last_run']=now.isoformat()
+            state['last_error']='；'.join(v for v in results.values() if v.startswith('错误：')) or None
+            state['checks']+=1
+            state['results']=results
+            persist()
+        return results
 def start_background():
     with LOCK:
         if state.get('starting'):
@@ -55,19 +79,7 @@ def worker():
         with LOCK:active=state['running']
         if active:update()
 threading.Thread(target=worker,daemon=True).start()
-PAGE=r"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>加拿大3D连续验证</title><style>
-body{font:16px system-ui,sans-serif;max-width:700px;margin:auto;padding:18px;background:#f5f6f9;color:#17243a}button{font-size:17px;padding:14px;border:0;border-radius:8px;margin:5px;background:#1765c1;color:white;min-height:46px}.card{background:white;padding:16px;margin:12px 0;border-radius:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:10px 5px;text-align:center;border-bottom:1px solid #e5e8ed}th{background:#edf2f8}.good{color:#16713a;font-weight:700}.bad{color:#ae2b2b;font-weight:700}.muted{color:#667085;font-size:13px}.tablewrap{overflow-x:auto}
-</style></head><body><h2>加拿大3D｜A/B连续验证</h2><p>点击开始后，服务运行期间每30秒检查开奖；只有点击停止才主动暂停。网页关闭或切到后台不会主动停止验证，但免费服务器休眠、重启或断网可能造成漏期。</p><button type="button" id="start">开始连续验证</button><button type="button" id="stop">停止验证</button><p id="msg">正在连接服务器…</p><div class="card" id="summary"></div><div class="card"><b>A组：历史最低50期</b><pre id="low"></pre></div><div class="card"><b>B组：历史最高15期</b><pre id="high"></pre></div><div class="card"><h3>最近15期真实验证记录</h3><p class="muted">只列出开奖前已保存预测的期号。未预测或尚未开奖不计入覆盖率；空白表示该组无提前预测。</p><div class="tablewrap"><table><thead><tr><th>期号</th><th>A组是否覆盖</th><th>B组是否覆盖</th></tr></thead><tbody id="recent"><tr><td colspan="3">读取中…</td></tr></tbody></table></div></div>
-<script>
-const $=id=>document.getElementById(id);
-let busy=false;
-async function cmd(s){if(busy)return;busy=true;try{let r=await fetch('/api/'+s,{method:'POST',cache:'no-store'});let j=await r.json();if(!r.ok)throw Error(j.error||'HTTP '+r.status);$('msg').textContent=j.message||'操作完成';await refresh(false)}catch(e){$('msg').textContent='操作失败：'+e.message}finally{busy=false}}
-function outcome(x){if(!x)return '<span class="muted">未预测</span>';if(x.actual===null)return '<span class="muted">待开奖</span>';return x.covered===true?'<span class="good">覆盖</span>':'<span class="bad">未覆盖</span>'}
-async function refresh(showMessage=true){try{let r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);let j=await r.json();if(showMessage)$('msg').textContent='状态读取成功（'+new Date().toLocaleTimeString()+'）';$('summary').textContent='状态：'+(j.running?'连续验证中':'已停止')+'；检查次数：'+(j.checks||0)+'；最近检查：'+(j.last_run||'无')+'；错误：'+(j.last_error||'无');for(let k of ['low','high']){let x=j[k]||{},s=x.stats||{},pending=(x.records||[]).find(r=>r.actual===null);$(k).textContent='已核对 '+(s.settled||0)+' 期；覆盖 '+(s.hits||0)+' 期；覆盖率 '+(s.rate??'—')+'%\n最新开奖：'+(x.last_fetch?.issue||'无')+' / '+(x.last_fetch?.num||'')+'\n待验证期号：'+(pending?.issue||'无')+'\n排除百/十/个：'+(pending?['百位','十位','个位'].map(p=>pending.excluded[p].join(',')).join(' / '):'无')+'\n已保存记录数：'+(x.records||[]).length}
-let low=new Map((j.low?.records||[]).map(x=>[String(x.issue),x]));let high=new Map((j.high?.records||[]).map(x=>[String(x.issue),x]));let issues=[...new Set([...low.keys(),...high.keys()])].sort((a,b)=>Number(b)-Number(a));let done=issues.filter(i=>low.get(i)?.actual!==null&&low.get(i)?.actual!==undefined||high.get(i)?.actual!==null&&high.get(i)?.actual!==undefined).slice(0,15);let body=$('recent');body.replaceChildren();if(!done.length){let tr=body.insertRow();let td=tr.insertCell();td.colSpan=3;td.textContent='暂无已开奖的前瞻记录'}else for(let i of done){let tr=body.insertRow();tr.insertCell().textContent=i;for(let map of [low,high]){let td=tr.insertCell();let rec=map.get(i);td.textContent=!rec?'未预测':rec.actual===null?'待开奖':rec.covered===true?'覆盖':'未覆盖';td.className=rec?.actual!==null&&rec?.actual!==undefined?(rec.covered===true?'good':'bad'):'muted'}}
-}catch(e){$('msg').textContent='网络异常：'+e.message}}
-$('start').addEventListener('click',()=>cmd('start'));$('stop').addEventListener('click',()=>cmd('stop'));refresh();setInterval(()=>refresh(),20000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
-</script></body></html>"""
+PAGE=r"""<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>加拿大3D连续验证</title><style>body{font:16px system-ui;max-width:700px;margin:auto;padding:18px;background:#f5f6f9;color:#17243a}button{font-size:17px;padding:14px;border:0;border-radius:8px;margin:5px;background:#1765c1;color:white}.card{background:white;padding:16px;margin:12px 0;border-radius:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}</style><h2>加拿大3D｜A/B连续验证</h2><p>网页打开期间自动保活，每30秒检查一次开奖；每30分钟重新回测并更新A/B公式。免费服务器休眠或重启时会中断，不保证零漏期。</p><button onclick="cmd('start')">开始连续验证</button><button onclick="cmd('stop')">停止验证</button><p id="msg">正在连接服务器…</p><div class="card" id="summary"></div><div class="card"><b>A组：历史最低50期</b><pre id="low"></pre></div><div class="card"><b>B组：历史最高15期</b><pre id="high"></pre></div><script>const $=id=>document.getElementById(id);async function cmd(s){try{let r=await fetch('/api/'+s,{method:'POST'});let j=await r.json();$('msg').textContent=j.message||j.error;await refresh()}catch(e){$('msg').textContent=e}}async function refresh(){try{let r=await fetch('/api/status',{cache:'no-store'}),j=await r.json();$('msg').textContent='状态读取成功（'+new Date().toLocaleTimeString()+'）';$('summary').textContent='状态：'+(j.running?'连续验证中':'已停止')+'；检查次数：'+j.checks+'；最近检查：'+(j.last_run||'无')+'；上次重算：'+(j.last_retest||'尚未')+'；下次重算：'+(j.next_retest||'待首次完成')+'；错误：'+(j.last_error||'无');for(let k of ['low','high']){let x=j[k]||{},s=x.stats||{},pending=(x.records||[]).find(r=>r.actual===null);$(k).textContent='已核对 '+(s.settled||0)+' 期；覆盖 '+(s.hits||0)+' 期；覆盖率 '+(s.rate??'—')+'%\n最新开奖：'+(x.last_fetch?.issue||'无')+' / '+(x.last_fetch?.num||'')+'\n待验证期号：'+(pending?.issue||'无')+'\n排除百/十/个：'+(pending?['百位','十位','个位'].map(p=>pending.excluded[p].join(',')).join(' / '):'无')+'\n已保存记录数：'+(x.records||[]).length}}catch(e){$('msg').textContent='网络异常：'+e}}refresh();setInterval(refresh,20000);</script></html>"""
 class Handler(BaseHTTPRequestHandler):
     def send(self,status,body,ctype='application/json; charset=utf-8'):
         raw=body.encode();self.send_response(status);self.send_header('Content-Type',ctype);self.send_header('Content-Length',str(len(raw)));self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(raw)
