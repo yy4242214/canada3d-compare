@@ -158,12 +158,12 @@ def snapshot():
                 'running':S.get('running',False),'last_error':S.get('last_error'),
                 'last_check':S.get('last_check'),'poll_seconds':POLL_SECONDS}
 
-HTML='''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>加拿大3D 三方法固定方法验证</title>
+HTML='''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>加拿大3D 三方法最高覆盖对照验证</title>
 <style>body{font-family:system-ui,sans-serif;background:#f4f6fa;color:#172438;max-width:980px;margin:auto;padding:14px}h1{font-size:22px}button{padding:13px 20px;border:0;border-radius:9px;color:white;background:#1767c5;font-size:16px;margin:4px;cursor:pointer}button:nth-child(2){background:#b65b1b}.box{background:white;border-radius:12px;padding:14px;margin:12px 0;box-shadow:0 1px 7px #d8deeb}table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:8px;border-bottom:1px solid #e5eaf0;text-align:left}th{background:#edf2f8}.scroll{overflow-x:auto}.muted{color:#627187;font-size:13px}pre{white-space:pre-wrap;overflow-wrap:anywhere}.good{color:green}.bad{color:#b52d2d}</style></head><body>
-<h1>加拿大3D｜三方法固定方法验证</h1><p class="muted">点击开始验证后，后台每30秒自动检查新开奖、核对并生成下一期预测；只有点击重新回测才重新选择公式。关闭网页不影响运行，但 Termux 进程必须保持运行。历史最低覆盖率不代表未来优势。</p>
+<h1>加拿大3D｜三方法最高覆盖对照验证</h1><p class="muted">点击开始验证后，后台每30秒自动检查新开奖、核对并生成下一期预测；使用前15期预热、最近15期回测；只有点击重新回测才重新选择公式。关闭网页不影响运行，但 Termux 进程必须保持运行。历史最高覆盖率不代表未来优势。</p>
 <button onclick="run('start')">开始验证</button><button onclick="run('retest')">重新回测</button><button onclick="run('stop')">暂停自动验证</button><p id="msg">读取中……</p>
 <div class="box"><h3>最新开奖与真实前瞻统计</h3><div id="summary"></div></div>
-<div class="box"><h3>当前选定九种公式（回测最低）</h3><div id="selection"></div></div>
+<div class="box"><h3>当前选定九种公式（最近15期回测最高）</h3><div id="selection"></div></div>
 <div class="box"><h3>下一期已保存预测</h3><div id="pending"></div></div>
 <div class="box"><h3>历史验证记录</h3><div class="scroll"><table><thead><tr><th>期号</th><th>排除百/十/个</th><th>注数</th><th>开奖号码</th><th>覆盖</th><th>预测创建时间</th></tr></thead><tbody id="records"></tbody></table></div></div>
 <div class="box"><h3>最近重新回测记录</h3><div id="history"></div></div>
