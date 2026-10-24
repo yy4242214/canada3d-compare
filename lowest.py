@@ -26,46 +26,34 @@ def save():
     tmp.replace(STATE)
 
 def fetch():
-    """分批拉取历史；验证分页确实前移，不允许重复页冒充215期。"""
+    """只请求接口已验证可用的最近100期；不使用无效分页。"""
+    url='https://pc28.world/api/v1/draws?limit=100'
+    req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0','Accept':'application/json','Referer':'https://pc28.world/'})
+    try:
+        with urllib.request.urlopen(req,timeout=20) as resp:
+            j=json.load(resp)
+    except Exception as e:
+        raise RuntimeError('最近100期历史开奖抓取失败：'+str(e)) from e
+    if not isinstance(j,dict) or not j.get('ok'):
+        raise RuntimeError('历史开奖接口没有返回成功标记')
+    raw=j.get('data',{}).get('items',[])
+    if not isinstance(raw,list):
+        raise RuntimeError('历史开奖数据格式不正确')
     rows={}
-    page_signatures=set()
-    for page in range(1,5):
-        url=f'https://pc28.world/api/v1/draws?limit=100&page={page}'
-        req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0','Accept':'application/json','Referer':'https://pc28.world/'})
+    for x in raw:
         try:
-            with urllib.request.urlopen(req,timeout=20) as resp:
-                j=json.load(resp)
-        except Exception as e:
-            raise RuntimeError(f'第{page}页历史开奖抓取失败：{e}') from e
-        if not isinstance(j,dict) or not j.get('ok'):
-            raise RuntimeError(f'第{page}页接口没有返回成功标记')
-        raw=j.get('data',{}).get('items',[])
-        if not isinstance(raw,list) or not raw:
-            raise RuntimeError(f'第{page}页没有开奖数据，已获取{len(rows)}期')
-        parsed={}
-        for x in raw:
-            try:
-                issue=int(x['nbr']);ns=[int(x[k]) for k in ('n1','n2','n3')]
-                if all(0<=v<=9 for v in ns):
-                    parsed[issue]={'issue':str(issue),'num':''.join(map(str,ns))}
-            except (ValueError,TypeError,KeyError):
-                continue
-        if not parsed:
-            raise RuntimeError(f'第{page}页没有有效开奖数据')
-        signature=tuple(sorted(parsed))
-        if signature in page_signatures:
-            raise RuntimeError(f'接口第{page}页与之前页面完全重复，分页可能无效；当前只有{len(rows)}期')
-        page_signatures.add(signature)
-        for issue,row in parsed.items():
-            if issue in rows and rows[issue]['num']!=row['num']:
-                raise RuntimeError(f'期号{issue}在不同页面出现不同开奖号码，已停止计算')
-            rows[issue]=row
-        if len(rows)>=215:
-            break
+            issue=int(x['nbr']);ns=[int(x[k]) for k in ('n1','n2','n3')]
+            if all(0<=v<=9 for v in ns):
+                row={'issue':str(issue),'num':''.join(map(str,ns))}
+                if issue in rows and rows[issue]['num']!=row['num']:
+                    raise RuntimeError(f'期号{issue}存在冲突开奖号码')
+                rows[issue]=row
+        except (ValueError,TypeError,KeyError):
+            continue
     result=[rows[k] for k in sorted(rows)]
-    if len(result)<215:
-        raise RuntimeError(f'有效历史开奖不足215期，实际{len(result)}；接口分页可能未返回足够早的开奖')
-    return result
+    if len(result)<100:
+        raise RuntimeError(f'需要100期有效历史数据，实际只有{len(result)}期')
+    return result[-100:]
 
 def formulas(history,next_issue):
     a,b,c=map(int,history[-1]['num']); span=max(a,b,c)-min(a,b,c); total=a+b+c

@@ -5,14 +5,14 @@ CACHE_LOCK=threading.Lock()
 _CACHE={}
 
 def choose(rows, formulas, unique_exclusions, positions):
-    # 15 draws warm-up + 200 non-overlapping validation draws.
-    rows=rows[-215:]
-    if len(rows)<215:
-        raise RuntimeError('多窗口回测需要至少215期有效历史数据（15期预热＋200期检验），实际'+str(len(rows)))
+    # 15 draws warm-up + 85 non-overlapping validation draws.
+    rows=rows[-100:]
+    if len(rows)<100:
+        raise RuntimeError('多窗口回测需要至少100期有效历史数据（15期预热＋85期检验），实际'+str(len(rows)))
     fingerprint=tuple((x['issue'],x['num']) for x in rows)
     with CACHE_LOCK:
         if fingerprint in _CACHE:return _CACHE[fingerprint]
-        train=[(rows[:i], rows[i]['num'], formulas(rows[:i],rows[i]['issue'])) for i in range(15,215)]
+        train=[(rows[:i], rows[i]['num'], formulas(rows[:i],rows[i]['issue'])) for i in range(15,100)]
         groups=[]
         for idx,pos in enumerate(positions):
             opts=[]
@@ -23,16 +23,16 @@ def choose(rows, formulas, unique_exclusions, positions):
                     if int(actual[idx]) not in ex:mask|=1<<i
                 opts.append((triple,mask))
             groups.append(opts)
-        # newest 50 / previous 50 / previous 100. No window overlaps.
-        w0=(1<<100)-1
-        w1=((1<<50)-1)<<100
-        w2=((1<<50)-1)<<150
+        # newest 35 / previous 25 / previous 25. No window overlaps.
+        w0=(1<<25)-1
+        w1=((1<<25)-1)<<25
+        w2=((1<<35)-1)<<50
         def metrics(mask):
             recent=(mask&w2).bit_count()
             middle=(mask&w1).bit_count()
             older=(mask&w0).bit_count()
             # Balanced low coverage across windows; penalize poor stability.
-            rates=(recent/50,middle/50,older/100)
+            rates=(recent/35,middle/25,older/25)
             score=(sum(rates)/3)+0.30*(max(rates)-min(rates))
             return score,recent,middle,older
         candidates=[]
@@ -50,17 +50,17 @@ def choose(rows, formulas, unique_exclusions, positions):
         # Joint low-coverage means both groups are rarely covered; do not maximize complementarity.
         shortlist=candidates[1:1001]
         b=min(shortlist,key=lambda x:(
-            (x[5]|a[5]).bit_count()/200 + 0.25*x[0],
+            (x[5]|a[5]).bit_count()/85 + 0.25*x[0],
             (x[5]|a[5]).bit_count(),x[0],x[4]))
         now=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         def pack(entry,role):
             score,recent,middle,older,names,mask=entry
             return {'pairs':{p:list(names[i]) for i,p in enumerate(positions)},
-                'hits':recent,'total':50,'combos':len(candidates),
-                'range':[rows[-50]['issue'],rows[-1]['issue']],
-                'selected_at':now,'strategy':role,'windows':{'recent50':recent,'previous50':middle,'previous100':older},
-                'total200':recent+middle+older,'score':round(score,5),
-                'joint200':(a[5]|b[5]).bit_count()}
+                'hits':recent,'total':35,'combos':len(candidates),
+                'range':[rows[-35]['issue'],rows[-1]['issue']],
+                'selected_at':now,'strategy':role,'windows':{'recent35':recent,'previous25':middle,'older25':older},
+                'total85':recent+middle+older,'score':round(score,5),
+                'joint85':(a[5]|b[5]).bit_count()}
         result=(pack(a,'多窗口稳定低覆盖'),pack(b,'低覆盖候选中最小联合覆盖'))
         _CACHE.clear();_CACHE[fingerprint]=result
         return result
