@@ -102,7 +102,7 @@ def backtest(rows):
                 if len(top)<9:heapq.heappush(top,entry)
                 elif key>top[0][0]:heapq.heapreplace(top,entry)
     selected=min(top,key=lambda e:e[0])
-    selected_hits=-selected[0][0][0]
+    selected_hits=-selected[0][0]
     selected_names=selected[1]
     return {'pairs':{p:list(selected_names[i]) for i,p in enumerate(POS)},'hits':selected_hits,
             'total':50,'combos':count,'range':[rows[15]['issue'],rows[-1]['issue']],
