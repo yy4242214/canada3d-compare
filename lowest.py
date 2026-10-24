@@ -26,7 +26,7 @@ def save():
     tmp.replace(STATE)
 
 def fetch():
-    url='https://pc28.world/api/v1/draws?limit=100'
+    url='https://pc28.world/api/v1/draws?limit=250'
     req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0','Accept':'application/json','Referer':'https://pc28.world/'})
     with urllib.request.urlopen(req,timeout=20) as resp: j=json.load(resp)
     if not j.get('ok'): raise RuntimeError('开奖接口未返回成功标记')
@@ -38,7 +38,7 @@ def fetch():
             if all(0<=v<=9 for v in ns): rows[issue]={'issue':str(issue),'num':''.join(map(str,ns))}
         except (ValueError,TypeError,KeyError): continue
     result=[rows[k] for k in sorted(rows)]
-    if len(result)<65: raise RuntimeError('有效历史开奖不足65期，实际'+str(len(result)))
+    if len(result)<215: raise RuntimeError('有效历史开奖不足215期，实际'+str(len(result)))
     return result
 
 def formulas(history,next_issue):
@@ -74,30 +74,8 @@ def unique_exclusions(fmap, selected, history):
     raise RuntimeError('无法生成3个不同排除数字')
 
 def backtest(rows):
-    rows=rows[-65:]
-    train=[(rows[:i],rows[i]['num'],formulas(rows[:i],rows[i]['issue'])) for i in range(15,65)]
-    opts=[]
-    for pidx,pos in enumerate(POS):
-        names=list(train[0][2][pos]); group=[]
-        for triple in itertools.combinations(names,3):
-            mask=0
-            for i,(history,actual,pred) in enumerate(train):
-                excluded,_=unique_exclusions(pred[pos],triple,history)
-                if int(actual[pidx]) not in excluded:mask|=1<<i
-            group.append((triple,mask))
-        opts.append(group)
-    count=len(opts[0])*len(opts[1])*len(opts[2])
-    best=None
-    for a in opts[0]:
-        for b in opts[1]:
-            ab=a[1]&b[1]
-            for c in opts[2]:
-                hits=(ab&c[1]).bit_count()
-                names=(a[0],b[0],c[0]);key=(hits,tuple(z for triple in names for z in triple))
-                if best is None or key<best[0]:best=(key,names)
-    return {'pairs':{p:list(best[1][i]) for i,p in enumerate(POS)},'hits':best[0][0],
-            'total':50,'combos':count,'range':[rows[15]['issue'],rows[-1]['issue']],
-            'selected_at':datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+    from optimizer import choose
+    return choose(rows,formulas,unique_exclusions,POS)[0]
 
 def predict(rows,sel):
     issue=str(int(rows[-1]['issue'])+1)
